@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Numerics;
 
 namespace Fractals
 {
@@ -17,7 +19,133 @@ namespace Fractals
         public int Y { get; }
         public int Count { get; }
     }
-    class FractalMaker
+    class SIMDVector4FractalMaker : IFractalMaker
+    {
+        public FractalData GenerateFractals(float left, float top, float xside, float yside, int maxX, int maxY, int maxCount)
+        {
+            List<Fractal> pos = new List<Fractal>
+            {
+                Capacity = maxX * maxY
+            };
+
+            float xscale, yscale;
+
+            // setting up the xscale and yscale 
+            xscale = (float)xside / maxX;
+            yscale = (float)yside / maxY;
+
+            const int len = 4;
+
+            var locks = new bool[len];
+            var counts = new int[len];
+
+
+            for (int y = 0; y < maxY; y++)
+            {
+                for (int x = 0; x < maxX; x += 4)
+                {
+                    // c_real 
+                    //cx = x * xscale + left;
+                    var cReal = new Vector4(x * xscale + left, (x + 1) * xscale + left, (x + 2) * xscale + left, (x + 3) * xscale + left);
+                    // c_imaginary 
+                    //cy = y * yscale + top;
+
+                    var cImag = new Vector4(y * yscale + top);
+                    var zReal = Vector4.Zero;
+                    var zImag = Vector4.Zero;
+
+                    counts = new int[4];
+                    locks = new bool[] { true, true, true, true };
+
+                    var edited = true;
+                    var loops = 0;
+
+                    
+                    var zRealSquare = zReal * zReal;
+                    var zImagSquare = zImag * zImag;
+
+                    while (edited && loops < maxCount)
+                    {
+                        edited = false;
+
+                        //tempx = zx * zx - zy * zy + cx;
+                        var tmp = zRealSquare - zImagSquare + cReal;
+
+                        // 2*z_real*z_imaginary + c_imaginary 
+                        //zy = 2 * zx * zy + cy;
+                        zImag = zImag * zReal * 2 + cImag;
+                        // Updating z_real = tempx 
+                        //zx = tempx;
+                        zReal = tmp;
+
+                        zRealSquare = zReal * zReal;
+                        zImagSquare = zImag * zImag;
+
+                        //(zx * zx + zy * zy < 4)
+                        var test = zRealSquare + zImagSquare;
+
+                        if (locks[0] && test.X < 4)
+                        {
+                            edited = true;
+                            counts[0] += 1;
+                        }
+                        else
+                        {
+                            locks[0] = false;
+                        }
+
+                        if (locks[1] && test.Y < 4)
+                        {
+                            edited = true;
+                            counts[1] += 1;
+                        }
+                        else
+                        {
+                            locks[1] = false;
+                        }
+
+                        if (locks[2] && test.Z < 4)
+                        {
+                            edited = true;
+                            counts[2] += 1;
+                        }
+                        else
+                        {
+                            locks[2] = false;
+                        }
+
+                        if (locks[3] && test.W < 4)
+                        {
+                            edited = true;
+                            counts[3] += 1;
+                        }
+                        else
+                        {
+                            locks[3] = false;
+                        }
+                        ++loops;
+                    }
+                    for (int i = 0; i < counts.Length; i++)
+                    {
+                        if (counts[i] < maxCount)
+                        {
+                            counts[i]++;
+                        }
+                    }
+
+                    //Add all four fractals to the List
+                    for(int i=0;i<4;i++)
+                    {
+                        pos.Add(new Fractal(x+i, y, (int)counts[i]));
+                    }
+                }
+
+            }
+            var data = new FractalData(maxX, maxY, maxCount, pos);
+            return data;
+        }
+    }
+    class FractalMaker : IFractalMaker
     {
         public FractalData GenerateFractals(float left, float top, float xside, float yside, int maxX, int maxY, int maxCount)
         {
@@ -165,7 +293,7 @@ namespace Fractals
             var height = 2000;
             var depth = 200;
 
-            var maker = new FractalMaker();
+            var maker = new SIMDVector4FractalMaker();
 
             var data = maker.GenerateFractals(-1, -1, 1, 1, width, height, depth);
 

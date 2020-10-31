@@ -19,6 +19,115 @@ namespace Fractals
         public int Y { get; }
         public int Count { get; }
     }
+    class SIMDVectorFractalMaker : IFractalMaker
+    {
+        readonly int smidLength;
+        public SIMDVectorFractalMaker()
+        {
+            smidLength = Vector<float>.Count;
+        }
+        public FractalData GenerateFractals(float left, float top, float xside, float yside, int maxX, int maxY, int maxCount)
+        {
+            float xscale, yscale;
+
+            // setting up the xscale and yscale 
+            xscale = (float)xside / maxX;
+            yscale = (float)yside / maxY;
+
+            var content = new float[smidLength];
+            var locks = new bool[smidLength];
+            var counts = new int[smidLength];
+
+            List<Fractal> pos = new List<Fractal>
+            {
+                Capacity = maxX * maxY
+            };
+
+            for (int y = 0; y < maxY; y++)
+            {
+                content = new float[maxX];
+                for (int i = 0; i < maxX; i++)
+                {
+                    content[i] = (i) * xscale + left;
+                }
+
+                for (int x = 0; x < maxX; x += smidLength)
+                {
+                    var leftoverLength = Math.Min(smidLength, maxX - x);
+
+                    for (int i = 0; i < leftoverLength; i++)
+                    {
+
+                        counts[i] = 0;
+                        locks[i] = true;
+                    }
+
+                    var cReal = new Vector<float>(content, x);
+
+                    var cImag = new Vector<float>(y * yscale + top);
+                    var zReal = Vector<float>.Zero;
+                    var zImag = Vector<float>.Zero;
+
+                    if (x == 0 && y == 0)
+                    {
+                        Console.WriteLine(cReal);
+                    }
+
+                    var edited = true;
+                    var loops = 0;
+
+                    var zRealSquare = zReal * zReal;
+                    var zImagSquare = zImag * zImag;
+
+                    while (edited && loops < maxCount)
+                    {
+                        edited = false;
+
+                        //tempx = zx * zx - zy * zy + cx;
+                        var tmp = zRealSquare - zImagSquare + cReal;
+
+                        // 2*z_real*z_imaginary + c_imaginary 
+                        //zy = 2 * zx * zy + cy;
+                        zImag = zImag * zReal * 2 + cImag;
+                        // Updating z_real = tempx 
+                        //zx = tempx;
+                        zReal = tmp;
+
+                        zRealSquare = zReal * zReal;
+                        zImagSquare = zImag * zImag;
+
+                        //(zx * zx + zy * zy < 4)
+
+                        var test = zRealSquare + zImagSquare;
+                        for (int i = 0; i < leftoverLength; i++)
+                        {
+                            if (locks[i] && test[i] < 4)
+                            {
+                                edited = true;
+                                counts[i] += 1;
+                            }
+                            else
+                            {
+                                locks[i] = false;
+                            }
+                        }
+                        ++loops;
+                    }
+
+                    for (int i = 0; i < leftoverLength; i++)
+                    {
+                        if (counts[i] < maxCount)
+                        {
+                            counts[i] += 1;
+                        }
+                        pos.Add(new Fractal(x + i, y, counts[i]));
+                    }
+                }
+            }
+            var data = new FractalData(maxX, maxY, maxCount, pos);
+            return data;
+        }
+    }
     class SIMDVector4FractalMaker : IFractalMaker
     {
         public FractalData GenerateFractals(float left, float top, float xside, float yside, int maxX, int maxY, int maxCount)
@@ -293,7 +402,7 @@ namespace Fractals
             var height = 2000;
             var depth = 200;
 
-            var maker = new SIMDVector4FractalMaker();
+            var maker = new SIMDVectorFractalMaker();
 
             var data = maker.GenerateFractals(-1, -1, 1, 1, width, height, depth);
 

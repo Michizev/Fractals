@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Linq;
 using System.Numerics;
 
 namespace Fractals
@@ -329,13 +330,11 @@ namespace Fractals
         public int MaxDepth { get; }
         public List<Fractal> Fractals { get; }
     }
-
-    class FractalSaver
+    class RandomColorMaker : IColorMaker
     {
         Random ran;
         int r, g, b;
-
-        public FractalSaver()
+        public RandomColorMaker()
         {
             ran = new Random();
             r = ran.Next(0, 100);
@@ -343,7 +342,44 @@ namespace Fractals
             b = ran.Next(0, 100);
         }
 
-        public void SaveFractal(FractalData data, string filename)
+        public Color GetColor(FractalData data, Fractal fractal)
+        {
+            var fc = (int)fractal.Count;
+            return Color.FromArgb(255, Math.Min(r * fc, 255), Math.Min(g * fc, 255), Math.Min(b * fc, 255));
+        }
+
+        
+    }
+    class GreenColorMaker : IColorMaker
+    {
+        public Color GetColor(FractalData data, Fractal fractal)
+        {
+            Color color;
+            double quotient = (double)fractal.Count / (double)data.MaxDepth;
+            double colorVal = Math.Clamp(quotient, 0f, 1.0f);
+            var rgb = new byte[3];
+            if (quotient > 0.5)
+            {
+                // Close to the mandelbrot set the color changes from green to white
+                rgb[0] = (byte)(colorVal * 255);
+                rgb[1] = 255;
+                rgb[2] = (byte)(colorVal * 255);
+            }
+            else
+            {
+                // Far away it changes from black to green
+                rgb[0] = 0;
+                rgb[1] = (byte)(colorVal * 255);
+                rgb[2] = 0;
+            }
+            color = Color.FromArgb(rgb[0], rgb[1], rgb[2]);
+            return color;
+        }
+    }
+
+    class FractalSaver
+    {
+        public void SaveFractal(FractalData data, IColorMaker colorMaker, string filename)
         {
             Color color;
             var img = new Bitmap(data.Width, data.Height);
@@ -354,60 +390,165 @@ namespace Fractals
                     img.SetPixel(x, y, Color.Purple);
                 }
             }
-            int colorType = 1;
+
             foreach (var fractal in data.Fractals)
             {
                 color = Color.Black;
                 if (fractal.X < data.Width && fractal.Y < data.Height)
                 {
-                    var fc = (int)fractal.Count;
-                    if (colorType == 0)
+                    if (fractal.Count >= data.MaxDepth)
                     {
-                        color = Color.FromArgb(255, Math.Min(r * fc, 255), Math.Min(g * fc, 255), Math.Min(b * fc, 255));
+                        color = Color.Black;
                     }
-                    else if (colorType == 1)
+                    else
                     {
-                        double quotient = (double)fractal.Count / (double)data.MaxDepth;
-                        double colorVal = Math.Clamp(quotient, 0f, 1.0f);
-                        var rgb = new byte[3];
-                        if (quotient > 0.5)
-                        {
-                            // Close to the mandelbrot set the color changes from green to white
-                            rgb[0] = (byte)(colorVal * 255);
-                            rgb[1] = 255;
-                            rgb[2] = (byte)(colorVal * 255);
-                        }
-                        else
-                        {
-                            // Far away it changes from black to green
-                            rgb[0] = 0;
-                            rgb[1] = (byte)(colorVal * 255);
-                            rgb[2] = 0;
-                        }
-                        color = Color.FromArgb(rgb[0], rgb[1], rgb[2]);
+                        color = colorMaker.GetColor(data, fractal);
                     }
-                    if (fc >= data.MaxDepth) color = Color.Black;
 
                     img.SetPixel(fractal.X, fractal.Y, color);
                 }
             }
             img.Save(filename, ImageFormat.Png);
         }
+
+        
     }
     class Program
     {
         static void Main(string[] args)
         {
+
             var width = 2000;
             var height = 2000;
             var depth = 200;
 
-            var maker = new SIMDVectorFractalMaker();
+            IFractalMaker maker = null;
+
+            IEnumerable<Type> getImplementation(Type @interface) => AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes()).Where(y => @interface.IsAssignableFrom(y) && !y.IsInterface);
+
+            var fractals = getImplementation(typeof(IFractalMaker));
+            var colors = getImplementation(typeof(IColorMaker));
+
+            int selection = -1;
+            int colorSelection = -1;
+            List<Type> algorithms = GetImplementations(fractals);
+            List<Type> colorAlgorithms = GetImplementations(colors);
+
+            while (true)
+            {
+                selection = -1;
+                var input = UserInput(algorithms, colorAlgorithms);
+                if (input != null)
+                {
+                    var val = input.Value;
+                    width = val.width;
+                    height = val.height;
+                    depth = val.depth;
+
+                    selection = val.selection;
+                    colorSelection = val.colorAlgorithm;
+                    break;
+                }
+            }
+
+
+            maker = (IFractalMaker)Activator.CreateInstance(algorithms[selection]);
+
+
 
             var data = maker.GenerateFractals(-1, -1, 1, 1, width, height, depth);
 
             var saver = new FractalSaver();
-            saver.SaveFractal(data, "Test.png");
+
+            var color = (IColorMaker)Activator.CreateInstance(colorAlgorithms[colorSelection]);
+
+            Console.WriteLine("####SAVING FILES####");
+
+            saver.SaveFractal(data, color, "Test.png");
+        }
+
+        private static List<Type> GetImplementations(IEnumerable<Type> fractals)
+        {
+            List<Type> algorithms = new List<Type>();
+            foreach (var i in fractals)
+            {
+                algorithms.Add(i);
+            }
+
+            return algorithms;
+        }
+
+        private static (int width, int height, int depth, int selection, int colorAlgorithm)? UserInput(List<Type> algorithms, List<Type> colorAlgorithms)
+        {
+            int width = 0,
+                height =0,
+                depth=0;
+
+
+            Console.WriteLine("Please pick an algorithm");
+            int j = 0;
+            foreach (var i in algorithms)
+            {
+                Console.WriteLine($"{j++} {i.Name}");
+            }
+
+            try
+            {
+                var userInput = Console.ReadLine();
+                int selection = int.Parse(userInput);
+
+                Console.WriteLine("Please pick a size (XxY) and the how many iterations should be run");
+                userInput = Console.ReadLine();
+                var splits = userInput.Split(" ");
+
+                if (splits.Length == 3)
+                {
+                    width = int.Parse(splits[0]);
+                    height = int.Parse(splits[1]);
+                    depth = int.Parse(splits[2]);
+                }
+
+                Console.WriteLine("Please pick an color");
+                j = 0;
+                foreach (var i in colorAlgorithms)
+                {
+                    Console.WriteLine($"{j++} {i.Name}");
+                }
+                userInput = Console.ReadLine();
+                int colorAlgorithm = int.Parse(userInput); 
+
+                return (width, height, depth, selection, colorAlgorithm);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Ups something went wrong, want to try again? (Y/n)");
+                int ask = 0;
+                do
+                {
+                    ask = AskForRepeat();
+                } while (ask == -1);
+                if (ask == 1)
+                {
+                    return null;
+                }
+                Environment.Exit(1);
+                return null;
+            }
+        }
+
+        private static int AskForRepeat()
+        {
+            var read = Console.ReadLine();
+            if (read.Length == 0)
+            {
+                return 1;
+            }
+            return (read.ToLowerInvariant()) switch
+            {
+                "n" => 0,
+                "y" => 1,
+                _ => -1,
+            };
         }
     }
 }
